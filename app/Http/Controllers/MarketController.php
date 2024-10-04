@@ -22,36 +22,43 @@ class MarketController extends Controller
 
     // POST /api/market
     public function addMarket(Request $request)
-    {
-        // Validation
-        $validator = Validator::make($request->all(), [
-            'mname' => 'required|string|max:50',
-        ]);
+{
+    // Validation
+    $validator = Validator::make($request->all(), [
+        'mname' => 'required|string|max:50',
+    ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 400);
-        }
-
-        // Create Market
-        $market = Market::create([
-            'mname' => $request->mname,
-        ]);
-
-        // Update daily table
-        $currentData = Daily::where('date', now()->format('Y-m-d'))->first();
-
-        if ($currentData) {
-            $currentData->increment('market_in');
-            $currentData->increment('market_exist');
-            $currentData->save();
-        }
-
-        if ($market) {
-            return response()->json(['message' => 'Market has been created!'], 201);
-        } else {
-            return response()->json(['message' => 'Something went wrong. Market cannot be created!'], 500);
-        }
+    if ($validator->fails()) {
+        return response()->json(['errors' => $validator->errors()], 400);
     }
+
+    // Create Market
+    $market = Market::create([
+        'mname' => $request->mname,
+    ]);
+
+    // Update daily table
+    $currentData = Daily::where('date', now()->format('Y-m-d'))->first();
+
+    if ($currentData) {
+        $currentData->increment('market_in');
+        $currentData->increment('market_exist');
+        $currentData->save();
+    }
+
+    if ($market) {
+        return response()->json([
+            'message' => 'Market has been created!',
+            'data' => [
+                'id' => $market->id,
+                'mname' => $market->mname,
+            ]
+        ], 201);
+    } else {
+        return response()->json(['message' => 'Something went wrong. Market cannot be created!'], 500);
+    }
+}
+
 
     // DELETE /api/market/{id}
     public function delete($id)

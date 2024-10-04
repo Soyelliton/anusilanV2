@@ -11,13 +11,21 @@ use App\Models\Market;
 use App\Models\Transaction;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Validator;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
 
 class BorrowersController extends Controller
 {
-    // Display all borrowers
     public function index()
     {
-        $borrowers = Borrower::all();
+        // Load borrowers with their addresses and loans where any loan has a status of 0
+        $borrowers = Borrower::whereHas('loans', function ($query) {
+            $query->where('status', 0);
+        })->with(['addresses', 'loans' => function ($query) {
+            $query->where('status', 0); // Only include loans with status 0 in the response
+        }])->get();
+
         return response()->json(['borrowers' => $borrowers], 200);
     }
 
@@ -36,25 +44,56 @@ class BorrowersController extends Controller
     // Store a newly created borrower
     public function store(Request $request)
     {
+        // Validation rules
         $request->validate([
-            'firstname' => 'required',
+            'firstname' => 'required|string|max:255',
+            'middlename' => 'nullable|string|max:255',
+            'lastname' => 'required|string|max:255',
+            'f_h_name' => 'nullable|string|max:255',
+            'gender' => 'required|string|in:male,female,other',  // Assuming gender values
+            'birthdate' => 'required|date',
+            'contact' => 'required|string|max:15',
+            'occupation' => 'nullable|string|max:255',
+            'occupation_address' => 'nullable|string|max:500',
+            'remarks' => 'nullable|string|max:500',
+            'aadhaar' => 'nullable|string|max:12|min:12',  // Aadhaar validation
+            'pan' => 'nullable|string|max:10|min:10',  // PAN validation
+            'voter' => 'nullable|string|max:10|min:10',  // Voter ID validation
+            'address1' => 'required|string|max:255',
+            'address2' => 'nullable|string|max:255',
+            'city' => 'required|string|max:100',
+            'province' => 'required|string|max:100',
+            'zipcode' => 'required|string|max:10',
+            'country' => 'required|string|max:100',
+            'occupation_landmark' => 'nullable|string|max:255',
+            'loan_type' => 'required|string|max:100',
+            'principal' => 'required|numeric|min:0',
+            'terms' => 'required|integer|min:1',
+            'terms2' => 'required|string|in:day/s,month/s',
+            'interest' => 'required|numeric|min:0|max:100',
+            'penalty' => 'nullable|numeric|min:0|max:100',
+            'date_started' => 'required|date',
+            'maturity_date' => 'required|date|after_or_equal:date_started',
+            'monthly' => 'nullable|numeric|min:0',
+            'total' => 'required|numeric|min:0',
+            'notes' => 'nullable|string|max:500',
             'profileimg' => 'nullable|image|mimes:jpg,png,jpeg,gif|max:2048',
             'attachedfile.*' => 'nullable|file|mimes:jpg,png,jpeg,gif|max:2048',
-            // Add other validation rules as necessary
         ]);
 
         $data = $request->except(['profileimg', 'attachedfile']);
-        $data['collector'] = Auth::user()->username;
+        $data['collector'] = "AdminBD";
         $data['time'] = now()->format('Y-m-d');
 
+        // Store profile image
         if ($request->hasFile('profileimg')) {
             $data['avatar'] = $request->file('profileimg')->store('borrowers', 'public');
         }
 
-        // Store Borrower
+        // Store borrower data
         $borrower = Borrower::create($data);
 
-        // Handle address
+        // Store address data
         $address = [
             'borrower_id' => $borrower->id,
             'address1' => $request->address1,
@@ -67,7 +106,7 @@ class BorrowersController extends Controller
         ];
         Address::create($address);
 
-        // Handle loan creation
+        // Store loan data
         $loanData = [
             'borrower_id' => $borrower->id,
             'loan_type' => $request->loan_type,
@@ -85,28 +124,45 @@ class BorrowersController extends Controller
         ];
         $loan = Loan::create($loanData);
 
-        // Handle payments
+        Log::info('terms value: ' . $request->terms);
+        Log::info('terms data type: ' . gettype($request->terms));
+
+        // Handle payments for day/s
         if ($request->terms2 == 'day/s') {
+            $terms = (int)$request->terms; // Ensure terms is an integer
             Payment::create([
                 'loan_id' => $loan->id,
-                'due_date' => now()->addDays($request->terms),
+                'due_date' => Carbon::parse($request->date_started)->addDays($terms)->format('Y-m-d'),
                 'due' => $request->principal,
                 'p_interest' => $request->principal * ($request->interest / 100),
                 'status' => 'Processing',
             ]);
-        } else {
-            for ($i = 1; $i <= $request->terms; $i++) {
-                Payment::create([
-                    'loan_id' => $loan->id,
-                    'due_date' => now()->addMonths($i),
-                    'due' => $request->principal / $request->terms,
-                    'p_interest' => $request->principal * ($request->interest / 100),
-                    'status' => 'Processing',
-                ]);
+        } 
+        // Handle payments for month/s
+        else {
+            $terms = (int)$request->terms; // Ensure terms is an integer
+            for ($i = 1; $i <= $terms; $i++) {
+                if ($i == 1) {
+                    Payment::create([
+                        'loan_id' => $loan->id,
+                        'due_date' => Carbon::parse($request->date_started)->addMonths(1)->format('Y-m-d'),
+                        'due' => $request->principal / $terms,
+                        'p_interest' => $request->principal * ($request->interest / 100),
+                        'status' => 'Processing',
+                    ]);
+                } else {
+                    Payment::create([
+                        'loan_id' => $loan->id,
+                        'due_date' => Carbon::parse($request->date_started)->addMonths($i)->format('Y-m-d'),
+                        'due' => $request->principal / $terms,
+                        'p_interest' => $request->principal * ($request->interest / 100),
+                        'status' => 'Processing',
+                    ]);
+                }
             }
         }
 
-        // Handle attachments
+        // Store attachments
         if ($request->hasFile('attachedfile')) {
             foreach ($request->file('attachedfile') as $file) {
                 $path = $file->store('attachments', 'public');

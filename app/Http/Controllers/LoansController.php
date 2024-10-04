@@ -76,6 +76,8 @@ class LoansController extends Controller
 
         $maturityDate = date('Y-m-d', strtotime($currentDate . " + $termInDays days"));
         $loanNo = (int)$loan->loan_no + 1;
+        dd($loanNo);
+        
 
         $loan->update([
             'date_started' => $currentDate,
